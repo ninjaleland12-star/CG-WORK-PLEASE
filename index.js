@@ -17,7 +17,7 @@ const WARRANT_CHANNEL = process.env.WARRANT_CHANNEL; // channel to post warrants
 const BOUNTY_CHANNEL = process.env.BOUNTY_CHANNEL;   // channel to post bounties
 const CASE_CHANNEL = process.env.CASE_CHANNEL;       // warrant file/archive channel
 
-const REAL_WARRANT_TIME = 126230400000; // 4 years in ms until Boutny hunters are implented
+const REAL_WARRANT_TIME = 259200000; // 4 years in ms until Boutny hunters are implented
 const TEST_WARRANT_TIME = 15000;     // 15 seconds test
 
 // ================= LAW BOOK =================
