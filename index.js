@@ -12,16 +12,15 @@ const client = new Client({
 });
 
 // ================= CONFIG =================
-const COMMAND_CHANNEL = process.env.COMMAND_CHANNEL; // where you type commands
-const WARRANT_CHANNEL = process.env.WARRANT_CHANNEL; // channel to post warrants
-const BOUNTY_CHANNEL = process.env.BOUNTY_CHANNEL;   // channel to post bounties
-const CASE_CHANNEL = process.env.CASE_CHANNEL;       // warrant file/archive channel
+const COMMAND_CHANNEL = process.env.COMMAND_CHANNEL;
+const WARRANT_CHANNEL = process.env.WARRANT_CHANNEL;
+const BOUNTY_CHANNEL = process.env.BOUNTY_CHANNEL;
+const CASE_CHANNEL = process.env.CASE_CHANNEL;
 
-const REAL_WARRANT_TIME = 604800000; // 7 days
-const TEST_WARRANT_TIME = 15000;     // 15 seconds test
+const REAL_WARRANT_TIME = 604800000;
+const TEST_WARRANT_TIME = 15000;
 
 // ================= LAW BOOK =================
-
 const lawBook = {
     // SECTION I — PURPOSE AND JURISDICTION
     "1.1": "Enforcement Authority — Applies across all Republic installations, vessels, divisions, and digital command networks. Articles IV and V remain active and supersede local or battalion statutes.",
@@ -113,11 +112,10 @@ const lawBook = {
     "6.2": "Breach of Indoctrination — Failing to uphold Republic training standards.",
     "6.3": "Unauthorized Recruitment — Attempting to enlist personnel without authority."
 };
-
 // ================= STORAGE =================
-const warrants = new Map();       // Active warrants
-const bounties = new Map();       // Active bounties
-const offenderHistory = new Map();// Repeat offenders
+const warrants = new Map();
+const bounties = new Map();
+const offenderHistory = new Map();
 let caseCounter = 1;
 
 // ================= COMMAND HANDLER =================
@@ -126,15 +124,25 @@ client.on('messageCreate', async (msg) => {
     if (msg.author.bot) return;
     if (msg.channel.id !== COMMAND_CHANNEL) return;
 
-    if (msg.content.toLowerCase().startsWith('!warrant-test')) {
+    const content = msg.content.toLowerCase();
+
+    if (content.startsWith('!warrant-test')) {
         await createWarrant(msg, true);
-    } else if (msg.content.toLowerCase().startsWith('!warrant')) {
+
+    } else if (content.startsWith('!warrant')) {
         await createWarrant(msg, false);
+
+    } else if (content.startsWith('!undo-warrant')) {
+        await undoWarrant(msg);
+
+    } else if (content.startsWith('!undo-bounty')) {
+        await undoBounty(msg);
     }
 });
 
 // ================= CREATE WARRANT =================
 async function createWarrant(msg, isTest) {
+
     const prefix = isTest ? '!warrant-test' : '!warrant';
     const duration = isTest ? TEST_WARRANT_TIME : REAL_WARRANT_TIME;
 
@@ -148,14 +156,12 @@ async function createWarrant(msg, isTest) {
 
     const issuedBy = msg.member.displayName;
 
-    // Offender tracking
     const previousCount = offenderHistory.get(suspect) || 0;
     const newCount = previousCount + 1;
     offenderHistory.set(suspect, newCount);
 
     const caseNumber = String(caseCounter++).padStart(4, '0');
 
-    // Post warrant
     const warrantEmbed = new EmbedBuilder()
         .setTitle('📝 WARRANT ISSUED')
         .addFields(
@@ -171,13 +177,13 @@ async function createWarrant(msg, isTest) {
     const warrantMsg = await warrantChannel.send({ embeds: [warrantEmbed] });
     await warrantMsg.react('✅');
 
-    // Post warrant file/archive
     let caseMsg;
     try {
         const caseChannel = await client.channels.fetch(CASE_CHANNEL);
         const caseEmbed = new EmbedBuilder()
             .setTitle(`📁 WARRANT FILE #${caseNumber}`)
             .addFields(
+                { name: 'Case Number', value: `#${caseNumber}` },
                 { name: 'Suspect', value: suspect },
                 { name: 'Previous Warrants', value: `${previousCount}`, inline: true },
                 { name: 'Current Total Warrants', value: `${newCount}`, inline: true },
@@ -189,13 +195,13 @@ async function createWarrant(msg, isTest) {
             .setTimestamp();
 
         caseMsg = await caseChannel.send({ embeds: [caseEmbed] });
+
     } catch (err) {
         console.error("WARRANT FILE CHANNEL ERROR:", err);
     }
 
     warrants.set(warrantMsg.id, { suspect, resolvedLaws, issuedBy, caseMsg, caseNumber, message: warrantMsg });
 
-    // Auto convert to bounty
     setTimeout(async () => {
         if (!warrants.has(warrantMsg.id)) return;
         await convertToBounty(warrantMsg.id);
@@ -204,6 +210,7 @@ async function createWarrant(msg, isTest) {
 
 // ================= CONVERT TO BOUNTY =================
 async function convertToBounty(warrantId) {
+
     const data = warrants.get(warrantId);
     if (!data) return;
 
@@ -225,50 +232,109 @@ async function convertToBounty(warrantId) {
     const bountyMsg = await bountyChannel.send({ embeds: [bountyEmbed] });
     await bountyMsg.react('✅');
 
-    bounties.set(bountyMsg.id, { caseMsg });
+    bounties.set(bountyMsg.id, { caseMsg, caseNumber });
 
-    // Update warrant file status
     if (caseMsg) {
         const updated = EmbedBuilder.from(caseMsg.embeds[0])
             .setColor('Gold')
-            .spliceFields(5, 1, { name: 'Status', value: 'BOUNTY ISSUED' });
+            .spliceFields(6, 1, { name: 'Status', value: 'BOUNTY ISSUED' });
         await caseMsg.edit({ embeds: [updated] });
     }
 
-    // Delete original warrant
     await message.delete().catch(() => {});
     warrants.delete(warrantId);
 }
 
+// ================= UNDO WARRANT =================
+async function undoWarrant(msg) {
+
+    const args = msg.content.split(' ');
+    if (args.length < 2) return msg.reply("Usage: !undo-warrant CASE_NUMBER");
+
+    const caseNumber = args[1].replace('#', '');
+
+    for (const [id, data] of warrants.entries()) {
+        if (data.caseNumber === caseNumber) {
+
+            if (data.caseMsg) {
+                const updated = EmbedBuilder.from(data.caseMsg.embeds[0])
+                    .setColor('Grey')
+                    .spliceFields(6, 1, { name: 'Status', value: 'CANCELLED' });
+                await data.caseMsg.edit({ embeds: [updated] });
+            }
+
+            await data.message.delete().catch(() => {});
+            warrants.delete(id);
+
+            return msg.reply(`Warrant #${caseNumber} cancelled.`);
+        }
+    }
+
+    msg.reply("No active warrant found with that case number.");
+}
+
+// ================= UNDO BOUNTY =================
+async function undoBounty(msg) {
+
+    const args = msg.content.split(' ');
+    if (args.length < 2) return msg.reply("Usage: !undo-bounty CASE_NUMBER");
+
+    const caseNumber = args[1].replace('#', '');
+
+    for (const [id, data] of bounties.entries()) {
+        if (data.caseNumber === caseNumber) {
+
+            if (data.caseMsg) {
+                const updated = EmbedBuilder.from(data.caseMsg.embeds[0])
+                    .setColor('Grey')
+                    .spliceFields(6, 1, { name: 'Status', value: 'CANCELLED' });
+                await data.caseMsg.edit({ embeds: [updated] });
+            }
+
+            const bountyChannel = await client.channels.fetch(BOUNTY_CHANNEL);
+            const bountyMessage = await bountyChannel.messages.fetch(id).catch(() => null);
+            if (bountyMessage) await bountyMessage.delete().catch(() => {});
+
+            bounties.delete(id);
+
+            return msg.reply(`Bounty #${caseNumber} cancelled.`);
+        }
+    }
+
+    msg.reply("No active bounty found with that case number.");
+}
+
 // ================= REACTION HANDLER =================
 client.on('messageReactionAdd', async (reaction, user) => {
+
     if (user.bot) return;
     if (reaction.partial) await reaction.fetch();
     if (reaction.message.partial) await reaction.message.fetch();
     if (reaction.emoji.name !== '✅') return;
 
-    // Handle bounty reactions
     if (bounties.has(reaction.message.id)) {
         const { caseMsg } = bounties.get(reaction.message.id);
+
         if (caseMsg) {
             const closed = EmbedBuilder.from(caseMsg.embeds[0])
                 .setColor('Green')
-                .spliceFields(5, 1, { name: 'Status', value: 'CLOSED' });
+                .spliceFields(6, 1, { name: 'Status', value: 'CLOSED' });
             await caseMsg.edit({ embeds: [closed] });
         }
+
         await reaction.message.delete().catch(() => {});
         bounties.delete(reaction.message.id);
-    }
 
-    // Handle warrant reactions
-    else if (warrants.has(reaction.message.id)) {
+    } else if (warrants.has(reaction.message.id)) {
         const { caseMsg } = warrants.get(reaction.message.id);
+
         if (caseMsg) {
             const closed = EmbedBuilder.from(caseMsg.embeds[0])
                 .setColor('Green')
-                .spliceFields(5, 1, { name: 'Status', value: 'CLOSED' });
+                .spliceFields(6, 1, { name: 'Status', value: 'CLOSED' });
             await caseMsg.edit({ embeds: [closed] });
         }
+
         await reaction.message.delete().catch(() => {});
         warrants.delete(reaction.message.id);
     }
